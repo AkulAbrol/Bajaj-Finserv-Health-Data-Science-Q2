@@ -194,14 +194,64 @@ import cv2
 import pandas as pd
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from base64 import b64encode
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import io
-# Update the Tesseract path setting
-pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'  # Linux path for Render
+from pathlib import Path
 
-# Update the FastAPI app configuration
+# Set Tesseract path based on environment
+if os.name == 'nt':  # Windows
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+else:  # Linux (Render)
+    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+
+# FastAPI app
+app = FastAPI()
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Create static directory if it doesn't exist
+static_dir = Path("static")
+static_dir.mkdir(exist_ok=True)
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Keep only one root endpoint that serves the HTML
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    with open("templates/index.html", "r") as f:
+        return HTMLResponse(content=f.read())
+
+@app.post("/get-lab-tests")
+async def get_lab_tests(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
+        processed_image = preprocess_image(image)
+        text = extract_text_from_image(processed_image)
+        results = parse_lab_test_results(text)
+        
+        # Convert processed image to base64
+        buffered = io.BytesIO()
+        processed_image.save(buffered, format="PNG")
+        img_str = b64encode(buffered.getvalue()).decode()
+        results["enhanced_image"] = f"data:image/png;base64,{img_str}"
+        
+        return JSONResponse(content=results)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+# Remove the test image processing code and only keep the server startup
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
